@@ -39,4 +39,11 @@ router.put(
 
 module.exports = router;
 
+// Update only profile image
+router.put(
+  "/:id/profile-image",
+  upload.single('profileImage'),
+  userController.updateProfileImage
+);
+
 

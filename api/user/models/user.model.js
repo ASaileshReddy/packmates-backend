@@ -8,6 +8,7 @@ const user = new Schema(
     email: { type: Schema.Types.String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: Schema.Types.String, required: true },
     mobilenumber: { type: Schema.Types.String, required: false, trim: true },
+    dob: { type: Schema.Types.Date, required: false },
     address: { type: Schema.Types.String, required: false, trim: true },
     city: { type: Schema.Types.String, required: false, trim: true },
     state: { type: Schema.Types.String, required: false, trim: true },
