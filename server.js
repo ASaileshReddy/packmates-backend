@@ -19,7 +19,8 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // MongoDB connection
-mongoose.connect(`mongodb://${config.database.host}:${config.database.port}/${config.database.db}`)
+const mongoUri = process.env.MONGODB_URI || `mongodb://${config.database.host}:${config.database.port}/${config.database.db}`;
+mongoose.connect(mongoUri)
   .then(() => {
     console.log('Connected to MongoDB');
   })
