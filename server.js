@@ -90,6 +90,27 @@ mongoose.connect(atlasUri, { dbName: 'packmates' })
       console.log('Pets collection already exists or error:', error.message);
     }
     
+    try {
+      await mongoose.connection.db.createCollection('calendars', {
+        validator: {
+          $jsonSchema: {
+            bsonType: "object",
+            required: ["user_id", "type", "start_date", "end_date", "status"],
+            properties: {
+              user_id: { bsonType: "objectId" },
+              type: { bsonType: "string", enum: ["availability", "request"] },
+              start_date: { bsonType: "date" },
+              end_date: { bsonType: "date" },
+              status: { bsonType: "string", enum: ["available", "requested", "booked", "cancelled", "in_review"] }
+            }
+          }
+        }
+      });
+      console.log('✅ Calendars collection created in packmates database');
+    } catch (error) {
+      console.log('Calendars collection already exists or error:', error.message);
+    }
+    
     // Insert a test document to ensure collections are visible
     try {
       const User = require('./api/user/models/user.model');
@@ -159,11 +180,35 @@ mongoose.connect(atlasUri, { dbName: 'packmates' })
       } else {
         console.log('✅ Pets collection already has visible documents');
       }
+
+      const calendarsCol = mongoose.connection.db.collection('calendars');
+      const existingCalendar = await calendarsCol.findOne({ type: 'availability' });
+      if (!existingCalendar) {
+        const userId = new (require('mongoose').Types.ObjectId)();
+        await calendarsCol.insertOne({
+          user_id: userId,
+          type: 'availability',
+          start_date: new Date('2025-04-10'),
+          end_date: new Date('2025-04-15'),
+          status: 'available',
+          neighbor_distance_range: 3,
+          pets: [],
+          reason: '',
+          isDeleted: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          _visible: true
+        });
+        console.log('🌱 Inserted visible document into calendars collection');
+      } else {
+        console.log('✅ Calendars collection already has visible documents');
+      }
       
       // Show document counts
       const usersCount = await usersCol.countDocuments();
       const petsCount = await petsCol.countDocuments();
-      console.log(`📊 Document counts - Users: ${usersCount}, Pets: ${petsCount}`);
+      const calendarsCount = await calendarsCol.countDocuments();
+      console.log(`📊 Document counts - Users: ${usersCount}, Pets: ${petsCount}, Calendars: ${calendarsCount}`);
       
     } catch (error) {
       console.log('Seeding error:', error.message);
@@ -202,6 +247,7 @@ app.get('/test-db', async (req, res) => {
     const collections = await db.listCollections().toArray();
     const usersCount = await db.collection('users').countDocuments();
     const petsCount = await db.collection('pets').countDocuments();
+    const calendarsCount = await db.collection('calendars').countDocuments();
     
     res.json({
       status: 'OK',
@@ -209,7 +255,8 @@ app.get('/test-db', async (req, res) => {
       collections: collections.map(c => c.name),
       documentCounts: {
         users: usersCount,
-        pets: petsCount
+        pets: petsCount,
+        calendars: calendarsCount
       },
       message: 'Database connection and collections are working!'
     });
@@ -270,6 +317,10 @@ app.use('/api/pets', petRoutes);
 // User routes
 const userRoutes = require('./api/user/routes/user.route');
 app.use('/api/users', userRoutes);
+
+// Calendar routes
+const calendarRoutes = require('./api/calendar/routes/calendar.route');
+app.use('/api/calendar', calendarRoutes);
 
 // Start server
 app.listen(PORT, '0.0.0.0', async () => {
@@ -344,8 +395,9 @@ app.listen(PORT, '0.0.0.0', async () => {
   }
   
   console.log(`\n✅ Server ready! Test endpoints:`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
-  console.log(`   Pets:   http://localhost:${PORT}/api/pets/getAllPets`);
+  console.log(`   Health:    http://localhost:${PORT}/health`);
+  console.log(`   Pets:      http://localhost:${PORT}/api/pets/getAllPets`);
+  console.log(`   Calendar:  http://localhost:${PORT}/api/calendar/getAllCalendarEntries`);
   console.log(`\n`);
 });
 

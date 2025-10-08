@@ -93,4 +93,10 @@ router.get(
   petController.getMediaFile
 );
 
+// Get pets by userId
+router.get(
+  "/user/:userId",
+  petController.getPetsByUserId
+);
+
 module.exports = router;

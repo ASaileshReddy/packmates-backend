@@ -767,3 +767,33 @@ exports.list = exports.getAllPets;
 exports.view = exports.getPetById;
 exports.update = exports.updatePet;
 exports.delete = exports.deletePet;
+
+// Fetch pets by userId
+exports.getPetsByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return response.error_message('Invalid User ID format', res);
+    }
+
+    const filter = {
+      isDeleted: false,
+      userId: mongoose.Types.ObjectId.createFromHexString(userId),
+    };
+
+    const pets = await petModel.find(filter)
+      .sort({ _id: -1 })
+      .lean();
+
+    // Normalize dates
+    pets.forEach((item) => {
+      item.createdAt = new Date(item.createdAt).toISOString();
+      item.updatedAt = new Date(item.updatedAt).toISOString();
+    });
+
+    return response.success_message(pets, res);
+  } catch (error) {
+    return response.error_message(error.message, res);
+  }
+};
