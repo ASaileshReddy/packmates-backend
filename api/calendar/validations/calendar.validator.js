@@ -75,12 +75,13 @@ exports.create = [
           });
         }
       } else if (type === 'availability') {
-        if (!neighbor_distance_range) {
-          return res.status(400).json({
-            success: false,
-            message: ["neighbor_distance_range is required for availability type"],
-          });
-        }
+        // neighbor_distance_range is optional for availability type
+        // if (!neighbor_distance_range) {
+        //   return res.status(400).json({
+        //     success: false,
+        //     message: ["neighbor_distance_range is required for availability type"],
+        //   });
+        // }
       }
       
       next();

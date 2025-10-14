@@ -2,6 +2,25 @@ const calendarModel = require('../models/calendar.model');
 const response = require('../../../response');
 const mongoose = require('mongoose');
 
+// Helper function to format dates consistently
+const formatCalendarDates = (calendarEntry) => {
+  if (!calendarEntry) return calendarEntry;
+  
+  const formatted = calendarEntry.toObject ? calendarEntry.toObject() : { ...calendarEntry };
+  
+  // Format dates to preserve the original date part
+  if (formatted.start_date) {
+    const startDate = new Date(formatted.start_date);
+    formatted.start_date = startDate.toISOString().split('T')[0] + 'T00:00:00.000Z';
+  }
+  if (formatted.end_date) {
+    const endDate = new Date(formatted.end_date);
+    formatted.end_date = endDate.toISOString().split('T')[0] + 'T00:00:00.000Z';
+  }
+  
+  return formatted;
+};
+
 exports.createCalendarEntry = async (req, res) => {
   try {
     const request = req.body;
@@ -23,10 +42,11 @@ exports.createCalendarEntry = async (req, res) => {
         return response.validation_error_message(data, res);
       }
     } else if (request.type === 'availability') {
-      if (!request.neighbor_distance_range) {
-        const data = { message: 'Neighbor distance range is required for availability type.' };
-        return response.validation_error_message(data, res);
-      }
+      // neighbor_distance_range is optional for availability type
+      // if (!request.neighbor_distance_range) {
+      //   const data = { message: 'Neighbor distance range is required for availability type.' };
+      //   return response.validation_error_message(data, res);
+      // }
     }
 
     // Check for overlapping entries for the same user
@@ -42,11 +62,29 @@ exports.createCalendarEntry = async (req, res) => {
       return response.validation_error_message(data, res);
     }
 
+    // Parse dates to ensure they're stored as intended (preserve the date part)
+    let startDate, endDate;
+    
+    // If the date string ends with T00:00:00.000, treat it as a date-only value in UTC
+    if (request.start_date.endsWith('T00:00:00.000')) {
+      const datePart = request.start_date.split('T')[0];
+      startDate = new Date(datePart + 'T00:00:00.000Z');
+    } else {
+      startDate = new Date(request.start_date);
+    }
+    
+    if (request.end_date.endsWith('T00:00:00.000')) {
+      const datePart = request.end_date.split('T')[0];
+      endDate = new Date(datePart + 'T00:00:00.000Z');
+    } else {
+      endDate = new Date(request.end_date);
+    }
+
     const calendarRec = await calendarModel.create({
       user_id: request.user_id,
       type: request.type,
-      start_date: new Date(request.start_date),
-      end_date: new Date(request.end_date),
+      start_date: startDate,
+      end_date: endDate,
       status: request.status || (request.type === 'availability' ? 'available' : 'requested'),
       pets: request.pets || [],
       reason: request.reason || '',
@@ -55,7 +93,8 @@ exports.createCalendarEntry = async (req, res) => {
     });
 
     if (calendarRec) {
-      response.success_message(calendarRec, res);
+      const formattedEntry = formatCalendarDates(calendarRec);
+      response.success_message(formattedEntry, res);
     }
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -113,16 +152,17 @@ exports.getAllCalendarEntries = async (req, res) => {
       .lean();
 
     // Format dates for response
-    calendarRecs.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-      item.start_date = new Date(item.start_date).toISOString();
-      item.end_date = new Date(item.end_date).toISOString();
+    const formattedEntries = calendarRecs.map(entry => {
+      const formatted = formatCalendarDates(entry);
+      formatted.createdAt = new Date(entry.createdAt).toISOString();
+      formatted.updatedAt = new Date(entry.updatedAt).toISOString();
+      return formatted;
+      
     });
 
     res.json({
       success: true,
-      data: calendarRecs,
+      data: formattedEntries,
       count: calendarRecordsCount
     });
   } catch (error) {
@@ -151,12 +191,11 @@ exports.getCalendarEntryById = async (req, res) => {
     }
 
     // Format dates for response
-    calendarRec.createdAt = new Date(calendarRec.createdAt).toISOString();
-    calendarRec.updatedAt = new Date(calendarRec.updatedAt).toISOString();
-    calendarRec.start_date = new Date(calendarRec.start_date).toISOString();
-    calendarRec.end_date = new Date(calendarRec.end_date).toISOString();
+    const formattedEntry = formatCalendarDates(calendarRec);
+    formattedEntry.createdAt = new Date(calendarRec.createdAt).toISOString();
+    formattedEntry.updatedAt = new Date(calendarRec.updatedAt).toISOString();
 
-    response.success_message(calendarRec, res);
+    response.success_message(formattedEntry, res);
   } catch (error) {
     response.error_message(error.message, res);
   }
@@ -185,8 +224,29 @@ exports.updateCalendarEntry = async (req, res) => {
 
     // Check for overlapping entries (excluding current record)
     if (request.start_date || request.end_date) {
-      const startDate = request.start_date ? new Date(request.start_date) : calendarRec.start_date;
-      const endDate = request.end_date ? new Date(request.end_date) : calendarRec.end_date;
+      let startDate, endDate;
+      
+      if (request.start_date) {
+        if (request.start_date.endsWith('T00:00:00.000')) {
+          const datePart = request.start_date.split('T')[0];
+          startDate = new Date(datePart + 'T00:00:00.000Z');
+        } else {
+          startDate = new Date(request.start_date);
+        }
+      } else {
+        startDate = calendarRec.start_date;
+      }
+      
+      if (request.end_date) {
+        if (request.end_date.endsWith('T00:00:00.000')) {
+          const datePart = request.end_date.split('T')[0];
+          endDate = new Date(datePart + 'T00:00:00.000Z');
+        } else {
+          endDate = new Date(request.end_date);
+        }
+      } else {
+        endDate = calendarRec.end_date;
+      }
 
       const overlappingEntry = await calendarModel.findOne({
         user_id: calendarRec.user_id,
@@ -205,8 +265,22 @@ exports.updateCalendarEntry = async (req, res) => {
     const updateData = {};
     
     if (request.type !== undefined) updateData.type = request.type;
-    if (request.start_date !== undefined) updateData.start_date = new Date(request.start_date);
-    if (request.end_date !== undefined) updateData.end_date = new Date(request.end_date);
+    if (request.start_date !== undefined) {
+      if (request.start_date.endsWith('T00:00:00.000')) {
+        const datePart = request.start_date.split('T')[0];
+        updateData.start_date = new Date(datePart + 'T00:00:00.000Z');
+      } else {
+        updateData.start_date = new Date(request.start_date);
+      }
+    }
+    if (request.end_date !== undefined) {
+      if (request.end_date.endsWith('T00:00:00.000')) {
+        const datePart = request.end_date.split('T')[0];
+        updateData.end_date = new Date(datePart + 'T00:00:00.000Z');
+      } else {
+        updateData.end_date = new Date(request.end_date);
+      }
+    }
     if (request.status !== undefined) updateData.status = request.status;
     if (request.pets !== undefined) updateData.pets = request.pets;
     if (request.reason !== undefined) updateData.reason = request.reason;
@@ -428,14 +502,15 @@ exports.filter = async (req, res) => {
     const calendarRecs = await query.lean();
 
     // Format dates for response
-    calendarRecs.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-      item.start_date = new Date(item.start_date).toISOString();
-      item.end_date = new Date(item.end_date).toISOString();
+    const formattedEntries = calendarRecs.map(entry => {
+      const formatted = formatCalendarDates(entry);
+      formatted.createdAt = new Date(entry.createdAt).toISOString();
+      formatted.updatedAt = new Date(entry.updatedAt).toISOString();
+      return formatted;
+      
     });
 
-    response.success_message(calendarRecs, res, calendarRecordsCount);
+    response.success_message(formattedEntries, res, calendarRecordsCount);
   } catch (error) {
     response.error_message(error.message, res);
   }
@@ -518,16 +593,17 @@ exports.getCalendarEntriesByUserId = async (req, res) => {
       .lean();
 
     // Format dates for response
-    calendarRecs.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-      item.start_date = new Date(item.start_date).toISOString();
-      item.end_date = new Date(item.end_date).toISOString();
+    const formattedEntries = calendarRecs.map(entry => {
+      const formatted = formatCalendarDates(entry);
+      formatted.createdAt = new Date(entry.createdAt).toISOString();
+      formatted.updatedAt = new Date(entry.updatedAt).toISOString();
+      return formatted;
+      
     });
 
     res.json({
       success: true,
-      data: calendarRecs,
+      data: formattedEntries,
       count: calendarRecordsCount
     });
   } catch (error) {
@@ -571,16 +647,17 @@ exports.getAllRequests = async (req, res) => {
       .lean();
 
     // Format dates for response
-    calendarRecs.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-      item.start_date = new Date(item.start_date).toISOString();
-      item.end_date = new Date(item.end_date).toISOString();
+    const formattedEntries = calendarRecs.map(entry => {
+      const formatted = formatCalendarDates(entry);
+      formatted.createdAt = new Date(entry.createdAt).toISOString();
+      formatted.updatedAt = new Date(entry.updatedAt).toISOString();
+      return formatted;
+      
     });
 
     res.json({
       success: true,
-      data: calendarRecs,
+      data: formattedEntries,
       count: calendarRecordsCount
     });
   } catch (error) {
@@ -627,16 +704,17 @@ exports.getAllAvailability = async (req, res) => {
       .lean();
 
     // Format dates for response
-    calendarRecs.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-      item.start_date = new Date(item.start_date).toISOString();
-      item.end_date = new Date(item.end_date).toISOString();
+    const formattedEntries = calendarRecs.map(entry => {
+      const formatted = formatCalendarDates(entry);
+      formatted.createdAt = new Date(entry.createdAt).toISOString();
+      formatted.updatedAt = new Date(entry.updatedAt).toISOString();
+      return formatted;
+      
     });
 
     res.json({
       success: true,
-      data: calendarRecs,
+      data: formattedEntries,
       count: calendarRecordsCount
     });
   } catch (error) {

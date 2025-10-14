@@ -43,13 +43,24 @@ exports.register = async (req, res) => {
       };
     }
 
+    // Normalize dob to UTC midnight if provided as local midnight
+    let normalizedDob;
+    if (dob) {
+      if (typeof dob === 'string' && dob.endsWith('T00:00:00.000')) {
+        const datePart = dob.split('T')[0];
+        normalizedDob = new Date(datePart + 'T00:00:00.000Z');
+      } else {
+        normalizedDob = new Date(dob);
+      }
+    }
+
     const user = await userModel.create({
       firstname,
       lastname,
       email: email.toLowerCase(),
       passwordHash,
       mobilenumber,
-      dob: dob ? new Date(dob) : undefined,
+      dob: normalizedDob,
       address,
       city,
       state,
@@ -115,6 +126,9 @@ exports.getById = async (req, res) => {
     }
     delete user.passwordHash;
     delete user.profileImage;
+    if (user.dob) {
+      try { user.dob = new Date(user.dob).toISOString(); } catch (_) {}
+    }
     response.success_message(user, res);
   } catch (error) {
     response.error_message(error.message, res);
@@ -131,7 +145,14 @@ exports.update = async (req, res) => {
     if (lastname !== undefined) update.lastname = lastname;
     if (email !== undefined) update.email = email.toLowerCase();
     if (mobilenumber !== undefined) update.mobilenumber = mobilenumber;
-    if (dob !== undefined) update.dob = dob ? new Date(dob) : undefined;
+    if (dob !== undefined) {
+      if (dob && typeof dob === 'string' && dob.endsWith('T00:00:00.000')) {
+        const datePart = dob.split('T')[0];
+        update.dob = new Date(datePart + 'T00:00:00.000Z');
+      } else {
+        update.dob = dob ? new Date(dob) : undefined;
+      }
+    }
     if (address !== undefined) update.address = address;
     if (city !== undefined) update.city = city;
     if (state !== undefined) update.state = state;
@@ -143,6 +164,9 @@ exports.update = async (req, res) => {
     }
     delete updated.passwordHash;
     delete updated.profileImage;
+    if (updated.dob) {
+      try { updated.dob = new Date(updated.dob).toISOString(); } catch (_) {}
+    }
     response.success_message(updated, res);
   } catch (error) {
     if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {

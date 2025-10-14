@@ -108,6 +108,16 @@ exports.createPet = async (req, res) => {
       uploadedAt: new Date(),
     })));
 
+    // Normalize simple location (address only)
+    const buildLocation = (loc) => {
+      if (!loc) return undefined;
+      return {
+        address: loc.address || undefined,
+        city: loc.city || undefined,
+        zipCode: loc.zipCode || undefined,
+      };
+    };
+
     const petRec = await petModel.create({
       ownerId: request.ownerId,
       petType: request.petType,
@@ -121,6 +131,17 @@ exports.createPet = async (req, res) => {
       nutrition: {
         description: request.nutrition?.description || "",
       },
+      overview: request.overview || "",
+      personality: Array.isArray(request.personality)
+        ? request.personality
+        : (typeof request.personality === 'string' && request.personality.trim() !== ''
+            ? [request.personality]
+            : []),
+      importantDates: {
+        birthday: request.importantDates?.birthday || null,
+        adoptionDay: request.importantDates?.adoptionDay || null,
+      },
+      location: buildLocation(request.location),
       media: {
         images: processedImages,
         videos: processedVideos,
@@ -399,29 +420,48 @@ exports.updatePet = async (req, res) => {
     }));
 
     const updateData = {
-      ownerId: request.ownerId,
-      petType: request.petType,
-      breed: request.breed,
-      gender: request.gender,
+      ownerId: request.ownerId !== undefined ? request.ownerId : petRec.ownerId,
+      petType: request.petType !== undefined ? request.petType : petRec.petType,
+      breed: request.breed !== undefined ? request.breed : petRec.breed,
+      gender: request.gender !== undefined ? request.gender : petRec.gender,
       age: {
-        label: request.age?.label,
-        months: request.age?.months,
+        label: request.age?.label !== undefined ? request.age.label : petRec.age?.label,
+        months: request.age?.months !== undefined ? request.age.months : petRec.age?.months,
       },
-      weightKg: request.weightKg,
+      weightKg: request.weightKg !== undefined ? request.weightKg : petRec.weightKg,
       nutrition: {
-        description: request.nutrition?.description || "",
+        description: request.nutrition?.description !== undefined ? request.nutrition.description : (petRec.nutrition?.description || ""),
       },
+      overview: request.overview !== undefined ? request.overview : (petRec.overview || ""),
+      personality: (Array.isArray(request.personality)
+        ? request.personality
+        : (typeof request.personality === 'string'
+            ? [request.personality]
+            : undefined)) || (petRec.personality || []),
+      importantDates: {
+        birthday: request.importantDates?.birthday !== undefined ? request.importantDates.birthday : (petRec.importantDates?.birthday || null),
+        adoptionDay: request.importantDates?.adoptionDay !== undefined ? request.importantDates.adoptionDay : (petRec.importantDates?.adoptionDay || null),
+      },
+      location: (() => {
+        if (request.location === undefined) return petRec.location;
+        const prev = (petRec.location && typeof petRec.location.toObject === 'function') ? petRec.location.toObject() : (petRec.location || {});
+        return {
+          address: request.location?.address !== undefined ? request.location.address : prev.address,
+          city: request.location?.city !== undefined ? request.location.city : prev.city,
+          zipCode: request.location?.zipCode !== undefined ? request.location.zipCode : prev.zipCode,
+        };
+      })(),
       media: {
         images: [...(petRec.media?.images || []), ...processedImages],
         videos: [...(petRec.media?.videos || []), ...processedVideos],
-        videoUrl: request.media?.videoUrl || petRec.media?.videoUrl || "",
+        videoUrl: request.media?.videoUrl !== undefined ? request.media.videoUrl : (petRec.media?.videoUrl || ""),
       },
       vaccination: {
         status: request.vaccination?.status !== undefined ? request.vaccination.status : petRec.vaccination?.status,
         files: [...(petRec.vaccination?.files || []), ...processedVaccinationFiles],
       },
       ongoingTreatment: request.ongoingTreatment !== undefined ? request.ongoingTreatment : petRec.ongoingTreatment,
-      behaviours: request.behaviours || petRec.behaviours || [],
+      behaviours: request.behaviours !== undefined ? request.behaviours : (petRec.behaviours || []),
       userId: petRec.userId,
     };
 
@@ -786,11 +826,46 @@ exports.getPetsByUserId = async (req, res) => {
       .sort({ _id: -1 })
       .lean();
 
-    // Normalize dates
-    pets.forEach((item) => {
-      item.createdAt = new Date(item.createdAt).toISOString();
-      item.updatedAt = new Date(item.updatedAt).toISOString();
-    });
+    // Setup GridFS bucket
+    const bucket = new GridFSBucket(mongoose.connection.db, { bucketName: 'pet_media' });
+
+    // Helper to fetch base64 content
+    const fetchFileContent = async (file) => {
+      if (!file || !file.gridFsId) return file;
+      try {
+        const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(file.gridFsId));
+        const chunks = [];
+        return new Promise((resolve, reject) => {
+          downloadStream.on('data', (chunk) => chunks.push(chunk));
+          downloadStream.on('end', () => {
+            const buffer = Buffer.concat(chunks);
+            resolve({
+              ...file,
+              fileContent: buffer.toString('base64'),
+            });
+          });
+          downloadStream.on('error', reject);
+        });
+      } catch (e) {
+        return file;
+      }
+    };
+
+    // Enrich media with base64 content
+    for (let i = 0; i < pets.length; i++) {
+      const p = pets[i];
+      if (p.media && Array.isArray(p.media.images)) {
+        p.media.images = await Promise.all(p.media.images.map(fetchFileContent));
+      }
+      if (p.media && Array.isArray(p.media.videos)) {
+        p.media.videos = await Promise.all(p.media.videos.map(fetchFileContent));
+      }
+      if (p.vaccination && Array.isArray(p.vaccination.files)) {
+        p.vaccination.files = await Promise.all(p.vaccination.files.map(fetchFileContent));
+      }
+      p.createdAt = new Date(p.createdAt).toISOString();
+      p.updatedAt = new Date(p.updatedAt).toISOString();
+    }
 
     return response.success_message(pets, res);
   } catch (error) {

@@ -180,6 +180,49 @@ let pet = new Schema(
         },
       ],
     },
+    // Optional high-level overview/summary about the pet
+    overview: {
+      type: Schema.Types.String,
+      required: false,
+      trim: true,
+    },
+    // Personality traits/tags for quick filtering or display
+    personality: [
+      {
+        type: Schema.Types.String,
+        required: false,
+        trim: true,
+      },
+    ],
+    // Important dates like birthday or adoption day
+    importantDates: {
+      birthday: {
+        type: Schema.Types.Date,
+        required: false,
+      },
+      adoptionDay: {
+        type: Schema.Types.Date,
+        required: false,
+      },
+    },
+    // Simple location (address only)
+    location: {
+      address: {
+        type: Schema.Types.String,
+        required: false,
+        trim: true,
+      },
+      city: {
+        type: Schema.Types.String,
+        required: false,
+        trim: true,
+      },
+      zipCode: {
+        type: Schema.Types.String,
+        required: false,
+        trim: true,
+      },
+    },
     ongoingTreatment: {
       type: Schema.Types.Boolean,
       required: true,
@@ -190,7 +233,6 @@ let pet = new Schema(
         type: Schema.Types.String,
         required: false,
         trim: true,
-        maxlength: 50,
       },
     ],
     isDeleted: {
@@ -219,5 +261,7 @@ pet.virtual("ownerInfo", {
 
 pet.set("toObject", { virtuals: true });
 pet.set("toJSON", { virtuals: true });
+
+// No geospatial index; we only store address information
 
 module.exports = mongoose.model("pet", pet);

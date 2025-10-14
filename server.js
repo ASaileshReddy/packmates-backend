@@ -47,6 +47,18 @@ mongoose.connect(atlasUri, { dbName: 'packmates' })
   .then(async () => {
     console.log('Connected to MongoDB via Mongoose');
     console.log('Database:', mongoose.connection.db.databaseName);
+    // Safety: drop any legacy 2dsphere index on location to prevent GeoJSON errors
+    try {
+      const petsCol = mongoose.connection.db.collection('pets');
+      const indexes = await petsCol.indexes();
+      const geoIdx = indexes.find(i => i.key && (i.key.location === '2dsphere' || i.name.includes('location_2dsphere')));
+      if (geoIdx) {
+        await petsCol.dropIndex(geoIdx.name);
+        console.log('🧹 Dropped legacy 2dsphere index on pets.location');
+      }
+    } catch (e) {
+      console.log('Index cleanup note:', e.message);
+    }
     
     // Force create collections immediately with explicit options
     try {
