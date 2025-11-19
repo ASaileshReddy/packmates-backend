@@ -381,43 +381,84 @@ exports.updatePet = async (req, res) => {
     let videoFiles = [];
     let vaccinationFiles = [];
 
-    if (req.files) {
-      if (req.files.images) {
-        imageFiles = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+    if (req.files && (req.files.images || req.files.videos || req.files.vaccinationFiles)) {
+      if (req.files.images) imageFiles = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+      if (req.files.videos) videoFiles = Array.isArray(req.files.videos) ? req.files.videos : [req.files.videos];
+      if (req.files.vaccinationFiles) vaccinationFiles = Array.isArray(req.files.vaccinationFiles) ? req.files.vaccinationFiles : [req.files.vaccinationFiles];
+    } else if (request.media || request.vaccination) {
+      if (request.media && Array.isArray(request.media.images)) {
+        imageFiles = request.media.images.map((f) => ({
+          originalname: f.fileName || f.originalName || 'image',
+          mimetype: f.fileType || 'application/octet-stream',
+          size: f.fileSizeKB ? Math.round(f.fileSizeKB * 1024) : (f.fileContent ? Buffer.from(f.fileContent, 'base64').length : 0),
+          buffer: f.fileContent ? Buffer.from(f.fileContent, 'base64') : undefined,
+        }));
       }
-      if (req.files.videos) {
-        videoFiles = Array.isArray(req.files.videos) ? req.files.videos : [req.files.videos];
+      if (request.media && Array.isArray(request.media.videos)) {
+        videoFiles = request.media.videos.map((f) => ({
+          originalname: f.fileName || f.originalName || 'video',
+          mimetype: f.fileType || 'application/octet-stream',
+          size: f.fileSizeMB ? Math.round(f.fileSizeMB * 1024 * 1024) : (f.fileContent ? Buffer.from(f.fileContent, 'base64').length : 0),
+          buffer: f.fileContent ? Buffer.from(f.fileContent, 'base64') : undefined,
+        }));
       }
-      if (req.files.vaccinationFiles) {
-        vaccinationFiles = Array.isArray(req.files.vaccinationFiles) ? req.files.vaccinationFiles : [req.files.vaccinationFiles];
+      if (request.vaccination && Array.isArray(request.vaccination.files)) {
+        vaccinationFiles = request.vaccination.files.map((f) => ({
+          originalname: f.fileName || f.originalName || 'file',
+          mimetype: f.fileType || 'application/octet-stream',
+          size: f.fileSizeKB ? Math.round(f.fileSizeKB * 1024) : (f.fileContent ? Buffer.from(f.fileContent, 'base64').length : 0),
+          buffer: f.fileContent ? Buffer.from(f.fileContent, 'base64') : undefined,
+        }));
       }
     }
 
-    // Process new files
-    const processedImages = imageFiles.map(file => ({
+    const bucket = new GridFSBucket(mongoose.connection.db, { bucketName: 'pet_media' });
+    const uploadToGridFS = async (file) => {
+      if (!file.buffer) {
+        return new Promise((resolve, reject) => {
+          const stream = bucket.openUploadStream(file.originalname, { contentType: file.mimetype });
+          stream.end(file.buffer || Buffer.alloc(0), (err) => {
+            if (err) return reject(err);
+            resolve(stream.id);
+          });
+        });
+      }
+      return new Promise((resolve, reject) => {
+        const stream = bucket.openUploadStream(file.originalname, { contentType: file.mimetype });
+        stream.end(file.buffer, (err) => {
+          if (err) return reject(err);
+          resolve(stream.id);
+        });
+      });
+    };
+
+    const processedImages = await Promise.all(imageFiles.map(async (file) => ({
       fileName: file.originalname,
-      fileSizeKB: Math.round(file.size / 1024),
+      gridFsId: await uploadToGridFS(file),
+      fileSizeKB: Math.max(1, Math.round(file.size / 1024)),
       status: "Completed",
       fileType: file.mimetype,
       uploadedAt: new Date(),
-    }));
+    })));
 
-    const processedVideos = videoFiles.map(file => ({
+    const processedVideos = await Promise.all(videoFiles.map(async (file) => ({
       fileName: file.originalname,
+      gridFsId: await uploadToGridFS(file),
       fileSizeMB: Math.round((file.size / (1024 * 1024)) * 100) / 100,
       status: "Completed",
       fileType: file.mimetype,
       uploadedAt: new Date(),
       url: null,
-    }));
+    })));
 
-    const processedVaccinationFiles = vaccinationFiles.map(file => ({
+    const processedVaccinationFiles = await Promise.all(vaccinationFiles.map(async (file) => ({
       fileName: file.originalname,
-      fileSizeKB: Math.round(file.size / 1024),
+      gridFsId: await uploadToGridFS(file),
+      fileSizeKB: Math.max(1, Math.round(file.size / 1024)),
       fileType: file.mimetype,
       status: "Completed",
       uploadedAt: new Date(),
-    }));
+    })));
 
     const updateData = {
       ownerId: request.ownerId !== undefined ? request.ownerId : petRec.ownerId,
