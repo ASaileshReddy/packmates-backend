@@ -480,6 +480,20 @@ exports.updatePet = async (req, res) => {
       uploadedAt: new Date(),
     })));
 
+    const shouldReplaceImages =
+      (request.media && Object.prototype.hasOwnProperty.call(request.media, 'images')) ||
+      (req.files && !!req.files.images);
+    const shouldReplaceVideos =
+      (request.media && Object.prototype.hasOwnProperty.call(request.media, 'videos')) ||
+      (req.files && !!req.files.videos);
+    const shouldReplaceVaccinationFiles =
+      (request.vaccination && Object.prototype.hasOwnProperty.call(request.vaccination, 'files')) ||
+      (req.files && !!req.files.vaccinationFiles);
+
+    const finalImages = shouldReplaceImages ? processedImages : (petRec.media?.images || []);
+    const finalVideos = shouldReplaceVideos ? processedVideos : (petRec.media?.videos || []);
+    const finalVaccinationFiles = shouldReplaceVaccinationFiles ? processedVaccinationFiles : (petRec.vaccination?.files || []);
+
     const updateData = {
       ownerId: request.ownerId !== undefined ? request.ownerId : petRec.ownerId,
       petType: request.petType !== undefined ? request.petType : petRec.petType,
