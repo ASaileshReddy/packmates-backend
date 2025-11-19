@@ -108,6 +108,26 @@ exports.createPet = async (req, res) => {
       uploadedAt: new Date(),
     })));
 
+    const shouldReplaceImages =
+      (request.media && Object.prototype.hasOwnProperty.call(request.media, 'images')) ||
+      (req.files && !!req.files.images);
+    const shouldReplaceVideos =
+      (request.media && Object.prototype.hasOwnProperty.call(request.media, 'videos')) ||
+      (req.files && !!req.files.videos);
+    const shouldReplaceVaccinationFiles =
+      (request.vaccination && Object.prototype.hasOwnProperty.call(request.vaccination, 'files')) ||
+      (req.files && !!req.files.vaccinationFiles);
+
+    const finalImages = shouldReplaceImages
+      ? processedImages
+      : (petRec.media?.images || []);
+    const finalVideos = shouldReplaceVideos
+      ? processedVideos
+      : (petRec.media?.videos || []);
+    const finalVaccinationFiles = shouldReplaceVaccinationFiles
+      ? processedVaccinationFiles
+      : (petRec.vaccination?.files || []);
+
     // Normalize simple location (address only)
     const buildLocation = (loc) => {
       if (!loc) return undefined;
@@ -493,13 +513,13 @@ exports.updatePet = async (req, res) => {
         };
       })(),
       media: {
-        images: [...(petRec.media?.images || []), ...processedImages],
-        videos: [...(petRec.media?.videos || []), ...processedVideos],
+        images: finalImages,
+        videos: finalVideos,
         videoUrl: request.media?.videoUrl !== undefined ? request.media.videoUrl : (petRec.media?.videoUrl || ""),
       },
       vaccination: {
         status: request.vaccination?.status !== undefined ? request.vaccination.status : petRec.vaccination?.status,
-        files: [...(petRec.vaccination?.files || []), ...processedVaccinationFiles],
+        files: finalVaccinationFiles,
       },
       ongoingTreatment: request.ongoingTreatment !== undefined ? request.ongoingTreatment : petRec.ongoingTreatment,
       behaviours: request.behaviours !== undefined ? request.behaviours : (petRec.behaviours || []),
