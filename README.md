@@ -97,3 +97,4 @@ packmates-backend/
 - `PORT` - Server port (default: 3000)
 - `MONGODB_URI` - MongoDB connection string
 - `NODE_ENV` - Environment (development/production)
+

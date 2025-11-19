@@ -17,6 +17,18 @@ router.get(
   calendarController.getAllCalendarEntries
 );
 
+// Get all request type entries - MUST come before /:id
+router.get(
+  "/requests/all",
+  calendarController.getAllRequests
+);
+
+// Get all availability type entries - MUST come before /:id
+router.get(
+  "/availability/all",
+  calendarController.getAllAvailability
+);
+
 // Get Calendar Entry by ID
 router.get(
   "/:id",
@@ -82,18 +94,6 @@ router.get(
 router.get(
   "/user/:user_id",
   calendarController.getCalendarEntriesByUserId
-);
-
-// Get all request type entries
-router.get(
-  "/requests/all",
-  calendarController.getAllRequests
-);
-
-// Get all availability type entries
-router.get(
-  "/availability/all",
-  calendarController.getAllAvailability
 );
 
 module.exports = router;

@@ -1,6 +1,64 @@
 const calendarModel = require('../models/calendar.model');
 const response = require('../../../response');
 const mongoose = require('mongoose');
+const { GridFSBucket } = require('mongodb');
+
+// Pet fields to include when populating calendar entries
+const petPopulateFields = 'petType breed gender age location ownerId';
+
+// Helpers to embed profile image base64 for user
+const enrichUserWithProfileImage = async (user, mongoDb) => {
+  if (!user) return user;
+  const safe = { ...user };
+  delete safe.passwordHash;
+  if (safe.profileImage && safe.profileImage.gridFsId && mongoDb) {
+    try {
+      const userBucket = new GridFSBucket(mongoDb, { bucketName: 'user_media' });
+      const gridId = new mongoose.Types.ObjectId(safe.profileImage.gridFsId);
+      const downloadStream = userBucket.openDownloadStream(gridId);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        downloadStream.on('data', (c) => chunks.push(c));
+        downloadStream.on('end', resolve);
+        downloadStream.on('error', reject);
+      });
+      const buffer = Buffer.concat(chunks);
+      safe.profileImage.fileContent = buffer.toString('base64');
+    } catch (_) {}
+  }
+  return safe;
+};
+
+// Helper to enrich pet media with base64 (images/videos/vaccination)
+const enrichPetMediaBase64 = async (pet, mongoDb) => {
+  if (!pet || !mongoDb) return pet;
+  const bucket = new GridFSBucket(mongoDb, { bucketName: 'pet_media' });
+  const fetchFileContent = async (file) => {
+    if (!file || !file.gridFsId) return file;
+    try {
+      const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(file.gridFsId));
+      const chunks = [];
+      return new Promise((resolve, reject) => {
+        downloadStream.on('data', (chunk) => chunks.push(chunk));
+        downloadStream.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          resolve({ ...file, fileContent: buffer.toString('base64') });
+        });
+        downloadStream.on('error', reject);
+      });
+    } catch (e) { return file; }
+  };
+  if (pet.media && Array.isArray(pet.media.images)) {
+    pet.media.images = await Promise.all(pet.media.images.map(fetchFileContent));
+  }
+  if (pet.media && Array.isArray(pet.media.videos)) {
+    pet.media.videos = await Promise.all(pet.media.videos.map(fetchFileContent));
+  }
+  if (pet.vaccination && Array.isArray(pet.vaccination.files)) {
+    pet.vaccination.files = await Promise.all(pet.vaccination.files.map(fetchFileContent));
+  }
+  return pet;
+};
 
 // Helper function to format dates consistently
 const formatCalendarDates = (calendarEntry) => {
@@ -144,21 +202,31 @@ exports.getAllCalendarEntries = async (req, res) => {
 
     const calendarRecordsCount = await calendarModel.find(filter).countDocuments();
     const calendarRecs = await calendarModel.find(filter)
-      .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType')
+      .populate('user_id')
+      .populate('pets')
       .sort({ start_date: 1 })
       .skip(request.skip)
       .limit(request.limit)
       .lean();
 
     // Format dates for response
-    const formattedEntries = calendarRecs.map(entry => {
+    const mongoDb = mongoose.connection.db;
+    const formattedEntries = [];
+    for (const entry of calendarRecs) {
       const formatted = formatCalendarDates(entry);
       formatted.createdAt = new Date(entry.createdAt).toISOString();
       formatted.updatedAt = new Date(entry.updatedAt).toISOString();
-      return formatted;
-      
-    });
+      // Enrich user and pet data
+      if (formatted.user_id) formatted.user_id = await enrichUserWithProfileImage(formatted.user_id, mongoDb);
+      if (Array.isArray(formatted.pets)) {
+        const enrichedPets = [];
+        for (const p of formatted.pets) {
+          enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+        }
+        formatted.pets = enrichedPets;
+      }
+      formattedEntries.push(formatted);
+    }
 
     res.json({
       success: true,
@@ -183,17 +251,26 @@ exports.getCalendarEntryById = async (req, res) => {
     }
 
     const calendarRec = await calendarModel.findOne({ _id: id, isDeleted: false })
-      .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType');
+      .populate('user_id')
+      .populate('pets');
     
     if (!calendarRec) {
       return response.error_message('Calendar entry not found', res);
     }
 
     // Format dates for response
+    const mongoDb = mongoose.connection.db;
     const formattedEntry = formatCalendarDates(calendarRec);
     formattedEntry.createdAt = new Date(calendarRec.createdAt).toISOString();
     formattedEntry.updatedAt = new Date(calendarRec.updatedAt).toISOString();
+    if (formattedEntry.user_id) formattedEntry.user_id = await enrichUserWithProfileImage(formattedEntry.user_id, mongoDb);
+    if (Array.isArray(formattedEntry.pets)) {
+      const enrichedPets = [];
+      for (const p of formattedEntry.pets) {
+        enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+      }
+      formattedEntry.pets = enrichedPets;
+    }
 
     response.success_message(formattedEntry, res);
   } catch (error) {
@@ -371,7 +448,7 @@ exports.filterByType = async (req, res) => {
     }
     const calendarRec = await calendarModel.find(filter)
       .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType');
+      .populate('pets', petPopulateFields);
     response.success_message(calendarRec, res);
   } catch (error) {
     response.error_message(error.message, res);
@@ -487,7 +564,7 @@ exports.filter = async (req, res) => {
     // Build query with pagination
     let query = calendarModel.find(filter)
       .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType')
+      .populate('pets', petPopulateFields)
       .sort({ start_date: 1 });
 
     // Apply pagination
@@ -501,14 +578,22 @@ exports.filter = async (req, res) => {
 
     const calendarRecs = await query.lean();
 
-    // Format dates for response
-    const formattedEntries = calendarRecs.map(entry => {
+    const mongoDb = mongoose.connection.db;
+    const formattedEntries = [];
+    for (const entry of calendarRecs) {
       const formatted = formatCalendarDates(entry);
       formatted.createdAt = new Date(entry.createdAt).toISOString();
       formatted.updatedAt = new Date(entry.updatedAt).toISOString();
-      return formatted;
-      
-    });
+      if (formatted.user_id) formatted.user_id = await enrichUserWithProfileImage(formatted.user_id, mongoDb);
+      if (Array.isArray(formatted.pets)) {
+        const enrichedPets = [];
+        for (const p of formatted.pets) {
+          enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+        }
+        formatted.pets = enrichedPets;
+      }
+      formattedEntries.push(formatted);
+    }
 
     response.success_message(formattedEntries, res, calendarRecordsCount);
   } catch (error) {
@@ -585,21 +670,29 @@ exports.getCalendarEntriesByUserId = async (req, res) => {
 
     const calendarRecordsCount = await calendarModel.find(filter).countDocuments();
     const calendarRecs = await calendarModel.find(filter)
-      .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType')
+      .populate('user_id')
+      .populate('pets')
       .sort({ start_date: 1 })
       .skip(request.skip)
       .limit(request.limit)
       .lean();
 
-    // Format dates for response
-    const formattedEntries = calendarRecs.map(entry => {
+    const mongoDb = mongoose.connection.db;
+    const formattedEntries = [];
+    for (const entry of calendarRecs) {
       const formatted = formatCalendarDates(entry);
       formatted.createdAt = new Date(entry.createdAt).toISOString();
       formatted.updatedAt = new Date(entry.updatedAt).toISOString();
-      return formatted;
-      
-    });
+      if (formatted.user_id) formatted.user_id = await enrichUserWithProfileImage(formatted.user_id, mongoDb);
+      if (Array.isArray(formatted.pets)) {
+        const enrichedPets = [];
+        for (const p of formatted.pets) {
+          enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+        }
+        formatted.pets = enrichedPets;
+      }
+      formattedEntries.push(formatted);
+    }
 
     res.json({
       success: true,
@@ -639,21 +732,29 @@ exports.getAllRequests = async (req, res) => {
 
     const calendarRecordsCount = await calendarModel.find(filter).countDocuments();
     const calendarRecs = await calendarModel.find(filter)
-      .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType')
+      .populate('user_id')
+      .populate('pets')
       .sort({ start_date: 1 })
       .skip(request.skip)
       .limit(request.limit)
       .lean();
 
-    // Format dates for response
-    const formattedEntries = calendarRecs.map(entry => {
+    const mongoDb = mongoose.connection.db;
+    const formattedEntries = [];
+    for (const entry of calendarRecs) {
       const formatted = formatCalendarDates(entry);
       formatted.createdAt = new Date(entry.createdAt).toISOString();
       formatted.updatedAt = new Date(entry.updatedAt).toISOString();
-      return formatted;
-      
-    });
+      if (formatted.user_id) formatted.user_id = await enrichUserWithProfileImage(formatted.user_id, mongoDb);
+      if (Array.isArray(formatted.pets)) {
+        const enrichedPets = [];
+        for (const p of formatted.pets) {
+          enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+        }
+        formatted.pets = enrichedPets;
+      }
+      formattedEntries.push(formatted);
+    }
 
     res.json({
       success: true,
@@ -696,21 +797,29 @@ exports.getAllAvailability = async (req, res) => {
 
     const calendarRecordsCount = await calendarModel.find(filter).countDocuments();
     const calendarRecs = await calendarModel.find(filter)
-      .populate('user_id', 'firstname lastname email')
-      .populate('pets', 'breed petType')
+      .populate('user_id')
+      .populate('pets')
       .sort({ start_date: 1 })
       .skip(request.skip)
       .limit(request.limit)
       .lean();
 
-    // Format dates for response
-    const formattedEntries = calendarRecs.map(entry => {
+    const mongoDb = mongoose.connection.db;
+    const formattedEntries = [];
+    for (const entry of calendarRecs) {
       const formatted = formatCalendarDates(entry);
       formatted.createdAt = new Date(entry.createdAt).toISOString();
       formatted.updatedAt = new Date(entry.updatedAt).toISOString();
-      return formatted;
-      
-    });
+      if (formatted.user_id) formatted.user_id = await enrichUserWithProfileImage(formatted.user_id, mongoDb);
+      if (Array.isArray(formatted.pets)) {
+        const enrichedPets = [];
+        for (const p of formatted.pets) {
+          enrichedPets.push(await enrichPetMediaBase64(p, mongoDb));
+        }
+        formatted.pets = enrichedPets;
+      }
+      formattedEntries.push(formatted);
+    }
 
     res.json({
       success: true,
